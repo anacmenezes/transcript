@@ -3,3 +3,8 @@ python-dotenv
 streamlit
 moviepy
 pydub
+pypdf
+langchain
+langchain-community
+langchain-openai
+faiss-cpu
