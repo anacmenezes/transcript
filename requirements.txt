@@ -7,4 +7,6 @@ pypdf
 langchain
 langchain-community
 langchain-openai
+langchain-classic
+langchain-text-splitters
 faiss-cpu
