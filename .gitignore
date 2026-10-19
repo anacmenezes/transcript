@@ -1,0 +1,22 @@
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Arquivos temporários
+temp/
+*.mp3
+*.mp4
+
+# Configurações locais
+.vscode/
