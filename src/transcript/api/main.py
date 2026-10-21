@@ -1,7 +1,7 @@
 
 from fastapi import FastAPI
 
-from src.transcript.api.routes import health, transcriptions
+from src.transcript.api.routes import analyses, health, pdf_chat, transcriptions
 
 
 app = FastAPI(
@@ -14,8 +14,20 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+
 app.include_router(
     transcriptions.router,
     prefix="/transcricoes",
     tags=["Transcrições"],
+)
+
+app.include_router(
+    analyses.router,
+    prefix="/transcricoes",
+    tags=["Análises"],
+)
+app.include_router(
+    pdf_chat.router,
+    prefix="/chat-pdf",
+    tags=["Chat com PDFs"],
 )
