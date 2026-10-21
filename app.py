@@ -1,41 +1,74 @@
-
 import logging
-from pathlib import Path
+import os
 
+import requests
 import streamlit as st
+from dotenv import load_dotenv
 
-from src.transcript.core.exceptions import (
-    TranscriptAIError,
-    AnalysisError,
-    ChatQueryError,
-    InvalidFileError,
-    TranscriptionError,
-)
-from src.transcript.services.analysis_service import analisar_transcricao
-from src.transcript.services.media import transcrever_media
-from src.transcript.services.pdf_chat import (
-    criar_chain_conversa,
-    consultar_documentos,
-)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-PDF_FOLDER = PROJECT_ROOT / "files"
+API_BASE_URL = os.getenv(
+    "API_BASE_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
+
+TIMEOUT_API = 180
+
+
+def requisicao_api(metodo, endpoint, **kwargs):
+    """Executa uma requisição HTTP e trata erros da API."""
+    url = f"{API_BASE_URL}{endpoint}"
+
+    try:
+        resposta = requests.request(
+            metodo,
+            url,
+            timeout=TIMEOUT_API,
+            **kwargs,
+        )
+
+        if not resposta.ok:
+            try:
+                detalhe = resposta.json().get(
+                    "detail",
+                    "Erro ao processar a solicitação.",
+                )
+            except (ValueError, AttributeError):
+                detalhe = "A API retornou uma resposta inválida."
+
+            raise RuntimeError(
+                f"Erro {resposta.status_code}: {detalhe}"
+            )
+
+        if resposta.status_code == 204:
+            return None
+
+        return resposta.json()
+
+    except requests.RequestException as error:
+        logger.exception("Falha na comunicação com a API.")
+        raise RuntimeError(
+            "Não foi possível conectar à API. "
+            "Verifique se a FastAPI está em execução."
+        ) from error
 
 
 def exibir_analise(analise):
+    """Exibe a análise estruturada devolvida pela API."""
     st.subheader("Resumo")
-    st.write(analise.resumo)
+    st.write(analise.get("resumo", "Não disponível."))
 
     secoes = [
-        ("Tópicos principais", analise.topicos_principais),
-        ("Decisões", analise.decisoes),
-        ("Dúvidas em aberto", analise.duvidas_em_aberto),
+        ("Tópicos principais", analise.get("topicos_principais", [])),
+        ("Decisões", analise.get("decisoes", [])),
+        ("Dúvidas em aberto", analise.get("duvidas_em_aberto", [])),
     ]
 
     for titulo, itens in secoes:
         st.subheader(titulo)
+
         if itens:
             for item in itens:
                 st.markdown(f"- {item}")
@@ -43,115 +76,130 @@ def exibir_analise(analise):
             st.caption("Nenhum item identificado.")
 
     st.subheader("Tarefas")
-    if analise.tarefas:
-        for tarefa in analise.tarefas:
-            st.markdown(f"- **Tarefa:** {tarefa.descricao}")
+    tarefas = analise.get("tarefas", [])
+
+    if tarefas:
+        for tarefa in tarefas:
+            st.markdown(f"- **Tarefa:** {tarefa['descricao']}")
             st.caption(
-                f"Responsável: {tarefa.responsavel or 'Não identificado'}"
+                f"Responsável: {tarefa.get('responsavel') or 'Não identificado'}"
             )
     else:
         st.caption("Nenhuma tarefa identificada.")
 
-def executar_transcricao(arquivo, prompt=None):
-    """Transcreve a mídia e guarda o texto para uso posterior."""
 
+def executar_transcricao(arquivo):
+    """Envia o arquivo à API e guarda o resultado na sessão."""
     try:
-        with st.spinner("Transcrevendo arquivo..."):
-            transcricao = transcrever_media(arquivo, prompt)
-
-        if not transcricao or not str(transcricao).strip():
-            raise TranscriptionError(
-                "Não foi possível obter uma transcrição desse arquivo."
+        with st.spinner("Enviando arquivo para transcrição..."):
+            resultado = requisicao_api(
+                "POST",
+                "/transcricoes",
+                files={
+                    "file": (
+                        arquivo.name,
+                        arquivo.getvalue(),
+                        arquivo.type or "application/octet-stream",
+                    )
+                },
             )
 
-        st.session_state["transcricao_atual"] = str(transcricao)
-        st.session_state["nome_arquivo_transcricao"] = arquivo.name
+        transcricao = resultado.get("transcript_text", "")
+
+        if not transcricao.strip():
+            st.error("A API não retornou o texto da transcrição.")
+            return
+
+        st.session_state["transcricao_atual"] = transcricao
+        st.session_state["nome_arquivo_transcricao"] = resultado.get(
+            "filename", arquivo.name
+        )
+        st.session_state["transcricao_id"] = resultado["id"]
         st.session_state["analise_atual"] = None
 
-        st.success("Transcrição concluída!")
+        st.success("Transcrição concluída e salva!")
 
-    except TranscriptAIError as error:
-        logger.warning("Falha na transcrição: %s", error)
+    except (RuntimeError, KeyError) as error:
+        logger.exception("Falha na transcrição.")
         st.error(str(error))
 
-    except Exception:
-        logger.exception("Erro inesperado na transcrição.")
-        st.error(
-            "Ocorreu um erro inesperado ao transcrever o arquivo. "
-            "Tente novamente."
-        )
 
 def executar_analise():
-    """Analisa a transcrição salva sem chamar a API de transcrição."""
+    """Solicita a análise da transcrição já salva na API."""
+    transcricao_id = st.session_state.get("transcricao_id")
 
-    transcricao = st.session_state.get("transcricao_atual")
-
-    if not transcricao:
+    if transcricao_id is None:
         st.warning("Faça uma transcrição antes de solicitar a análise.")
         return
 
     try:
         with st.spinner("Analisando o conteúdo..."):
-            analise = analisar_transcricao(transcricao)
+            resultado = requisicao_api(
+                "POST",
+                f"/transcricoes/{transcricao_id}/analise",
+            )
 
+        analise = resultado.get("result", resultado)
         st.session_state["analise_atual"] = analise
         st.success("Análise concluída!")
 
-    except AnalysisError:
-        logger.exception("Falha na análise da transcrição.")
-        st.error(
-            "A transcrição foi preservada, mas a análise falhou. "
-            "Você pode tentar novamente."
-        )
-
-    except TranscriptAIError as error:
-        logger.exception("Falha no processamento da análise.")
-        st.error(
-            "A transcrição foi preservada, mas não foi possível "
-            f"concluir a análise: {error}"
-        )
-
-    except Exception:
-        logger.exception("Erro inesperado durante a análise.")
-        st.error(
-            "A transcrição foi preservada, mas ocorreu um erro "
-            "inesperado na análise. Tente novamente."
-        )
-
-def inicializar_chat():
-    """Inicializa a cadeia RAG com os PDFs disponíveis."""
-
-    try:
-        with st.spinner("Processando PDFs e inicializando o chat..."):
-            chain = criar_chain_conversa(PDF_FOLDER)
-
-        st.session_state["chain"] = chain
-        st.success("Chat com PDFs inicializado!")
-
-    except TranscriptAIError as error:
+    except (RuntimeError, AttributeError) as error:
+        logger.exception("Falha na análise.")
         st.error(str(error))
-    except Exception:
-        logger.exception("Erro inesperado ao inicializar o chat PDF.")
-        st.error("Não foi possível inicializar o chat PDF.")
 
-def salvar_pdfs(arquivos_pdf):
-    """Salva os PDFs enviados na pasta do projeto."""
 
-    PDF_FOLDER.mkdir(parents=True, exist_ok=True)
-
-    for arquivo in arquivos_pdf:
-        nome = Path(arquivo.name).name
-
-        if not nome.lower().endswith(".pdf"):
-            continue
-
-        if not arquivo.getvalue():
-            raise InvalidFileError(
-                f"O arquivo '{nome}' está vazio."
+def inicializar_chat(arquivo_pdf):
+    """Envia um PDF à API e cria uma sessão de chat."""
+    try:
+        with st.spinner("Enviando PDF e preparando o chat..."):
+            resultado = requisicao_api(
+                "POST",
+                "/chat-pdf/sessoes",
+                files={
+                    "file": (
+                        arquivo_pdf.name,
+                        arquivo_pdf.getvalue(),
+                        "application/pdf",
+                    )
+                },
             )
 
-        destino = PDF_FOLDER / nome
-        destino.write_bytes(arquivo.getvalue())
+        st.session_state["pdf_sessao_id"] = resultado["sessao_id"]
+        st.session_state["pdf_historico"] = []
+        st.success("Chat com PDF inicializado!")
+
+    except (RuntimeError, KeyError) as error:
+        logger.exception("Falha ao inicializar o chat PDF.")
+        st.error(str(error))
+
+
+def perguntar_pdf(pergunta):
+    """Envia uma pergunta à sessão de chat criada pela API."""
+    sessao_id = st.session_state.get("pdf_sessao_id")
+
+    if not sessao_id:
+        st.warning("Envie um PDF e inicialize o chat primeiro.")
+        return
+
+    try:
+        resultado = requisicao_api(
+            "POST",
+            f"/chat-pdf/sessoes/{sessao_id}/perguntas",
+            json={"pergunta": pergunta},
+        )
+
+        st.session_state["pdf_historico"].append(
+            {
+                "pergunta": pergunta,
+                "resposta": resultado.get("resposta", ""),
+                "fontes": resultado.get("fontes", []),
+            }
+        )
+
+    except RuntimeError as error:
+        logger.exception("Falha ao consultar o PDF.")
+        st.error(str(error))
+
 
 def pagina_transcricao():
     st.subheader("Transcreva e analise áudios e vídeos")
@@ -159,138 +207,87 @@ def pagina_transcricao():
     tab_video, tab_audio = st.tabs(["Vídeo", "Áudio"])
 
     with tab_video:
-        prompt_video = st.text_input(
-            "Contexto opcional para a transcrição",
-            key="video_prompt",
-        )
-
         arquivo_video = st.file_uploader(
             "Adicione um vídeo",
             type=["mp4", "mov"],
             key="video_file",
         )
 
-        if arquivo_video is not None and st.button(
-            "Transcrever vídeo",
-            key="transcribe_video",
-        ):
-            executar_transcricao(arquivo_video, prompt_video)
+        if arquivo_video and st.button("Transcrever vídeo"):
+            executar_transcricao(arquivo_video)
 
     with tab_audio:
-        prompt_audio = st.text_input(
-            "Contexto opcional para a transcrição",
-            key="audio_prompt",
-        )
-
         arquivo_audio = st.file_uploader(
             "Adicione um áudio",
             type=["mp3", "m4a"],
             key="audio_file",
         )
 
-        if arquivo_audio is not None and st.button(
-            "Transcrever áudio",
-            key="transcribe_audio",
-        ):
-            executar_transcricao(arquivo_audio, prompt_audio)
+        if arquivo_audio and st.button("Transcrever áudio"):
+            executar_transcricao(arquivo_audio)
 
     transcricao = st.session_state.get("transcricao_atual")
-    nome_arquivo = st.session_state.get(
-        "nome_arquivo_transcricao",
-        "Arquivo transcrito",
-    )
 
     if transcricao:
         st.divider()
-        st.subheader(f"Transcrição: {nome_arquivo}")
+        st.subheader(
+            f"Transcrição: "
+            f"{st.session_state.get('nome_arquivo_transcricao', 'Arquivo')}"
+        )
 
         st.text_area(
             "Texto transcrito",
             value=transcricao,
             height=250,
             disabled=True,
-            key="transcricao_exibida",
         )
 
-        if st.button(
-            "Analisar transcrição",
-            key="analisar_transcricao",
-        ):
+        if st.button("Analisar transcrição"):
             executar_analise()
 
         analise = st.session_state.get("analise_atual")
 
-        if analise is not None:
+        if analise:
             exibir_analise(analise)
+
 
 def pagina_chat_pdf():
     st.subheader("Converse com seus documentos")
-    PDF_FOLDER.mkdir(parents=True, exist_ok=True)
 
-    arquivos_pdf = st.file_uploader(
-        "Adicione arquivos PDF",
+    arquivo_pdf = st.file_uploader(
+        "Adicione um arquivo PDF",
         type=["pdf"],
-        accept_multiple_files=True,
         key="pdf_upload",
     )
 
-    if arquivos_pdf and st.button("Salvar PDFs", key="save_pdfs"):
-        try:
-            salvar_pdfs(arquivos_pdf)
-            st.success("PDFs salvos com sucesso.")
-        except TranscriptAIError as error:
-            st.error(str(error))
-        except OSError:
-            logger.exception("Erro ao salvar PDFs.")
-            st.error("Não foi possível salvar os arquivos.")
+    if arquivo_pdf and st.button("Inicializar chat"):
+        inicializar_chat(arquivo_pdf)
 
-    quantidade_pdfs = len(list(PDF_FOLDER.glob("*.pdf")))
-    st.caption(f"PDFs disponíveis: {quantidade_pdfs}")
+    if st.session_state.get("pdf_sessao_id"):
+        st.caption("Sessão de chat ativa.")
 
-    if st.button("Inicializar / atualizar chat", key="init_pdf_chat"):
-        if quantidade_pdfs == 0:
-            st.warning("Adicione pelo menos um PDF antes de inicializar.")
-        else:
-            inicializar_chat()
+    for item in st.session_state.get("pdf_historico", []):
+        with st.chat_message("user"):
+            st.write(item["pergunta"])
 
-    chain = st.session_state.get("chain")
+        with st.chat_message("assistant"):
+            st.write(item["resposta"])
 
-    if chain is None:
-        st.info("Salve seus PDFs e inicialize o chat para começar.")
-        return
+            if item["fontes"]:
+                with st.expander("Consultar fontes"):
+                    for fonte in item["fontes"]:
+                        st.write(fonte.get("arquivo", "Documento"))
+                        if fonte.get("pagina") is not None:
+                            st.caption(
+                                f"Página: {fonte['pagina'] + 1}"
+                            )
 
-    pergunta = st.chat_input(
-        "Faça uma pergunta sobre seus documentos",
-        key="pdf_question",
-    )
+    pergunta = st.chat_input("Faça uma pergunta sobre o PDF")
 
     if pergunta:
-        try:
-            with st.spinner("Buscando informações nos documentos..."):
-                resposta = consultar_documentos(chain, pergunta)
+        perguntar_pdf(pergunta)
+        st.rerun()
 
-            st.markdown("**Resposta**")
-            st.write(resposta["answer"])
-
-            fontes = resposta.get("source_documents", [])
-            if fontes:
-                with st.expander("Consultar fontes"):
-                    for indice, documento in enumerate(fontes, start=1):
-                        origem = documento.metadata.get("source", "Documento")
-                        pagina = documento.metadata.get("page")
-
-                        st.markdown(f"**Fonte {indice}: {origem}**")
-                        if pagina is not None:
-                            st.caption(f"Página: {pagina + 1}")
-                        st.write(documento.page_content[:1000])
-
-        except ChatQueryError as error:
-            st.error(str(error))
-        except TranscriptAIError as error:
-            st.error(str(error))
-        except Exception:
-            logger.exception("Erro inesperado ao consultar o chat PDF.")
-            st.error("Ocorreu um erro inesperado ao consultar os documentos.")
 
 def main():
     st.set_page_config(
@@ -312,6 +309,7 @@ def main():
 
     with tab_pdf:
         pagina_chat_pdf()
+
 
 if __name__ == "__main__":
     main()

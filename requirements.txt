@@ -17,3 +17,4 @@ psycopg[binary]
 alembic
 python-multipart
 httpx
+requests
