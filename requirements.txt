@@ -10,3 +10,10 @@ langchain-openai
 langchain-classic
 langchain-text-splitters
 faiss-cpu
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+psycopg[binary]
+alembic
+python-multipart
+httpx

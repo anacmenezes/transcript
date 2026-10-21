@@ -20,3 +20,6 @@ temp/
 
 # Configurações locais
 .vscode/
+
+# Docker
+docker-compose.yml
