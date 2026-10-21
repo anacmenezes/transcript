@@ -52,48 +52,71 @@ def exibir_analise(analise):
     else:
         st.caption("Nenhuma tarefa identificada.")
 
-
-def processar_midia(arquivo, prompt=None):
-    """Executa a transcrição e, depois, a análise estruturada."""
-
-    with st.spinner("Transcrevendo arquivo..."):
-        transcricao = transcrever_media(arquivo, prompt)
-
-    if not transcricao or not str(transcricao).strip():
-        raise TranscriptionError(
-            "Não foi possível obter uma transcrição desse arquivo."
-        )
-
-    st.success("Transcrição concluída!")
-
-    with st.expander("Ver transcrição completa", expanded=True):
-        st.text_area(
-            "Texto transcrito",
-            value=str(transcricao),
-            height=250,
-            disabled=True,
-            key=f"transcricao_{arquivo.name}",
-        )
-
-    with st.spinner("Analisando o conteúdo..."):
-        analise = analisar_transcricao(str(transcricao))
-
-    st.success("Análise concluída!")
-    exibir_analise(analise)
-
-
 def executar_transcricao(arquivo, prompt=None):
+    """Transcreve a mídia e guarda o texto para uso posterior."""
+
     try:
-        processar_midia(arquivo, prompt)
+        with st.spinner("Transcrevendo arquivo..."):
+            transcricao = transcrever_media(arquivo, prompt)
+
+        if not transcricao or not str(transcricao).strip():
+            raise TranscriptionError(
+                "Não foi possível obter uma transcrição desse arquivo."
+            )
+
+        st.session_state["transcricao_atual"] = str(transcricao)
+        st.session_state["nome_arquivo_transcricao"] = arquivo.name
+        st.session_state["analise_atual"] = None
+
+        st.success("Transcrição concluída!")
+
     except TranscriptAIError as error:
+        logger.warning("Falha na transcrição: %s", error)
         st.error(str(error))
+
     except Exception:
-        logger.exception("Erro inesperado no fluxo de transcrição.")
+        logger.exception("Erro inesperado na transcrição.")
         st.error(
-            "Ocorreu um erro inesperado ao processar o arquivo. "
+            "Ocorreu um erro inesperado ao transcrever o arquivo. "
             "Tente novamente."
         )
 
+def executar_analise():
+    """Analisa a transcrição salva sem chamar a API de transcrição."""
+
+    transcricao = st.session_state.get("transcricao_atual")
+
+    if not transcricao:
+        st.warning("Faça uma transcrição antes de solicitar a análise.")
+        return
+
+    try:
+        with st.spinner("Analisando o conteúdo..."):
+            analise = analisar_transcricao(transcricao)
+
+        st.session_state["analise_atual"] = analise
+        st.success("Análise concluída!")
+
+    except AnalysisError:
+        logger.exception("Falha na análise da transcrição.")
+        st.error(
+            "A transcrição foi preservada, mas a análise falhou. "
+            "Você pode tentar novamente."
+        )
+
+    except TranscriptAIError as error:
+        logger.exception("Falha no processamento da análise.")
+        st.error(
+            "A transcrição foi preservada, mas não foi possível "
+            f"concluir a análise: {error}"
+        )
+
+    except Exception:
+        logger.exception("Erro inesperado durante a análise.")
+        st.error(
+            "A transcrição foi preservada, mas ocorreu um erro "
+            "inesperado na análise. Tente novamente."
+        )
 
 def inicializar_chat():
     """Inicializa a cadeia RAG com os PDFs disponíveis."""
@@ -110,7 +133,6 @@ def inicializar_chat():
     except Exception:
         logger.exception("Erro inesperado ao inicializar o chat PDF.")
         st.error("Não foi possível inicializar o chat PDF.")
-
 
 def salvar_pdfs(arquivos_pdf):
     """Salva os PDFs enviados na pasta do projeto."""
@@ -131,7 +153,6 @@ def salvar_pdfs(arquivos_pdf):
         destino = PDF_FOLDER / nome
         destino.write_bytes(arquivo.getvalue())
 
-
 def pagina_transcricao():
     st.subheader("Transcreva e analise áudios e vídeos")
 
@@ -142,6 +163,7 @@ def pagina_transcricao():
             "Contexto opcional para a transcrição",
             key="video_prompt",
         )
+
         arquivo_video = st.file_uploader(
             "Adicione um vídeo",
             type=["mp4", "mov"],
@@ -149,7 +171,7 @@ def pagina_transcricao():
         )
 
         if arquivo_video is not None and st.button(
-            "Transcrever e analisar vídeo",
+            "Transcrever vídeo",
             key="transcribe_video",
         ):
             executar_transcricao(arquivo_video, prompt_video)
@@ -159,6 +181,7 @@ def pagina_transcricao():
             "Contexto opcional para a transcrição",
             key="audio_prompt",
         )
+
         arquivo_audio = st.file_uploader(
             "Adicione um áudio",
             type=["mp3", "m4a"],
@@ -166,11 +189,39 @@ def pagina_transcricao():
         )
 
         if arquivo_audio is not None and st.button(
-            "Transcrever e analisar áudio",
+            "Transcrever áudio",
             key="transcribe_audio",
         ):
             executar_transcricao(arquivo_audio, prompt_audio)
 
+    transcricao = st.session_state.get("transcricao_atual")
+    nome_arquivo = st.session_state.get(
+        "nome_arquivo_transcricao",
+        "Arquivo transcrito",
+    )
+
+    if transcricao:
+        st.divider()
+        st.subheader(f"Transcrição: {nome_arquivo}")
+
+        st.text_area(
+            "Texto transcrito",
+            value=transcricao,
+            height=250,
+            disabled=True,
+            key="transcricao_exibida",
+        )
+
+        if st.button(
+            "Analisar transcrição",
+            key="analisar_transcricao",
+        ):
+            executar_analise()
+
+        analise = st.session_state.get("analise_atual")
+
+        if analise is not None:
+            exibir_analise(analise)
 
 def pagina_chat_pdf():
     st.subheader("Converse com seus documentos")
@@ -241,7 +292,6 @@ def pagina_chat_pdf():
             logger.exception("Erro inesperado ao consultar o chat PDF.")
             st.error("Ocorreu um erro inesperado ao consultar os documentos.")
 
-
 def main():
     st.set_page_config(
         page_title="Transcript AI",
@@ -262,7 +312,6 @@ def main():
 
     with tab_pdf:
         pagina_chat_pdf()
-
 
 if __name__ == "__main__":
     main()

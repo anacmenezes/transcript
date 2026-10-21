@@ -1,16 +1,18 @@
 
 import logging
 import subprocess
+import tempfile
 
 import imageio_ffmpeg
 
+from pathlib import Path
 from src.transcript.core.config import get_settings
 from src.transcript.core.exceptions import (
     InvalidFileError,
     TranscriptionError,
 )
 from src.transcript.services.transcription import transcrever_audio
-from src.transcript.utils.files import garantir_diretorio, remover_arquivo
+from src.transcript.utils.files import garantir_diretorio
 
 logger = logging.getLogger(__name__)
 
@@ -37,81 +39,84 @@ def transcrever_media(file_media, prompt=None):
 
     try:
         conteudo = file_media.getvalue()
-    except AttributeError as error:
+    except (AttributeError, OSError, ValueError) as error:
         raise InvalidFileError("Não foi possível ler o arquivo enviado.") from error
 
     if not conteudo:
         raise InvalidFileError("O arquivo enviado está vazio.")
 
     if extensao in EXTENSOES_AUDIO:
-        try:
-            file_media.seek(0)
-            return transcrever_audio(file_media, prompt)
-        except TranscriptionError:
-            raise
-        except Exception as error:
-            logger.exception("Falha ao transcrever o áudio.")
-            raise TranscriptionError(
-                "Não foi possível processar o arquivo de áudio."
-            ) from error
-
-    settings = get_settings()
-    garantir_diretorio(settings.temp_dir)
-
-    video_path = settings.temp_dir / f"video{extensao}"
-    audio_path = settings.temp_dir / "audio.mp3"
+        file_media.seek(0)
+        return transcrever_audio(file_media, prompt)
 
     try:
-        video_path.write_bytes(conteudo)
+        settings = get_settings()
+        garantir_diretorio(settings.temp_dir)
 
-        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-        comando = [
-            ffmpeg_path,
-            "-i", str(video_path),
-            "-vn",
-            "-ac", "2",
-            "-ar", "16000",
-            "-codec:a", "libmp3lame",
-            "-y",
-            str(audio_path),
-        ]
+        # Cada execução usa seu próprio diretório temporário.
+        with tempfile.TemporaryDirectory(
+            prefix="transcript_",
+            dir=str(settings.temp_dir),
+        ) as diretorio_temporario:
+            pasta_temporaria = Path(diretorio_temporario)
 
-        subprocess.run(
-            comando,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+            video_path = pasta_temporaria / f"video{extensao}"
+            audio_path = pasta_temporaria / "audio.mp3"
 
-        if not audio_path.is_file() or audio_path.stat().st_size == 0:
-            raise TranscriptionError(
-                "Não foi possível extrair áudio válido do vídeo."
+            video_path.write_bytes(conteudo)
+
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+
+            comando = [
+                ffmpeg_path,
+                "-i", str(video_path),
+                "-vn",
+                "-ac", "2",
+                "-ar", "16000",
+                "-codec:a", "libmp3lame",
+                "-y",
+                str(audio_path),
+            ]
+
+            subprocess.run(
+                comando,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
 
-        with audio_path.open("rb") as audio_file:
-            return transcrever_audio(audio_file, prompt)
+            if not audio_path.is_file() or audio_path.stat().st_size == 0:
+                raise TranscriptionError(
+                    "Não foi possível extrair áudio válido do vídeo."
+                )
+
+            with audio_path.open("rb") as audio_file:
+                return transcrever_audio(audio_file, prompt)
+
+    except TranscriptionError:
+        raise
 
     except subprocess.TimeoutExpired as error:
+        logger.warning("Tempo limite excedido ao processar vídeo.")
         raise TranscriptionError(
             "O processamento do vídeo excedeu o tempo limite."
         ) from error
+
     except subprocess.CalledProcessError as error:
-        logger.warning("FFmpeg falhou: %s", (error.stderr or "")[-2000:])
+        logger.warning(
+            "FFmpeg falhou: %s",
+            (error.stderr or "")[-2000:],
+        )
         raise TranscriptionError(
             "Não foi possível extrair o áudio. "
-            "Verifique se o vídeo é válido e contém uma faixa de áudio."
+            "Verifique se o vídeo é válido e contém áudio."
         ) from error
-    except (InvalidFileError, TranscriptionError):
-        raise
-    except OSError as error:
-        logger.exception("Erro de arquivo durante o processamento de mídia.")
+
+    except Exception as error:
+        logger.exception(
+            "Falha inesperada ao processar o vídeo."
+        )
         raise TranscriptionError(
-            "Ocorreu um erro ao processar o arquivo de mídia."
+            "Ocorreu um erro ao preparar o vídeo para transcrição."
         ) from error
-    finally:
-        for caminho in (audio_path, video_path):
-            try:
-                remover_arquivo(caminho)
-            except OSError:
-                logger.warning("Não foi possível remover o arquivo temporário.")
