@@ -1,6 +1,36 @@
-.venv
-__pycache__
-*.pyc
-.git
+
+# Git
+.git/
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Segredos
 .env
-.pytest_cache
+.env.*
+!.env.example
+
+# Cache Python
+__pycache__/
+*.py[cod]
+
+# Testes e ferramentas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Arquivos temporários e mídias
+temp/
+*.mp3
+*.mp4
+
+# Configurações locais
+.vscode/
+
+# Arquivos de build
+*.egg-info/
+dist/
+build/

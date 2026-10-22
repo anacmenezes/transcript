@@ -1,9 +1,8 @@
 openai
 python-dotenv
 streamlit
-moviepy
-pydub
 pypdf
+imageio-ffmpeg
 langchain
 langchain-community
 langchain-openai
