@@ -3,6 +3,13 @@ from fastapi import FastAPI
 
 from src.transcript.api.routes import analyses, health, pdf_chat, transcriptions
 
+from fastapi import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from src.transcript.api.middleware import ObservabilityMiddleware
+from src.transcript.observability.logging import configure_logging
+
+configure_logging()
 
 app = FastAPI(
     title="Transcript AI API",
@@ -12,6 +19,15 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
+
+app.add_middleware(ObservabilityMiddleware)
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 app.include_router(health.router)
 
@@ -31,3 +47,7 @@ app.include_router(
     prefix="/chat-pdf",
     tags=["Chat com PDFs"],
 )
+
+@app.get("/health/live", tags=["Saúde"])
+def liveness():
+    return {"status": "alive", "service": "transcript-ai"}

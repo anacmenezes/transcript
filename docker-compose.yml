@@ -1,0 +1,53 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: transcript-ai-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: transcript_ai
+      POSTGRES_USER: transcript_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
+    ports:
+      - "5433:5432"
+    volumes:
+      - transcript_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transcript_user -d transcript_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: transcript-ai-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - transcript_prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: transcript-ai-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - transcript_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  transcript_postgres_data:
+  transcript_prometheus_data:
+  transcript_grafana_data:
