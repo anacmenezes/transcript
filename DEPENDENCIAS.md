@@ -39,17 +39,7 @@ Foi removida de `requirements.txt` porque não foi encontrado uso direto nos arq
 
 Essas decisões se referem às dependências declaradas diretamente pelo projeto. Os pacotes não foram desinstalados do ambiente virtual durante a revisão.
 
-## 4. Dependências que merecem avaliação futura
-
-### `langchain`
-
-Não foi identificado uso direto nos arquivos pesquisados, e a consulta ao pacote instalado não indicou dependentes diretos. Sua remoção de `requirements.txt` ainda precisa de validação final.
-
-### `httpx`
-
-Não foi identificado uso direto no código analisado. Entretanto, o pacote é declarado como dependência de `langchain-core` e `langgraph-sdk`, portanto não deve ser tratado automaticamente como desnecessário para o ambiente.
-
-## 5. Organização do código
+## 4. Organização do código
 
 A revisão identificou responsabilidades separadas nos seguintes módulos:
 
@@ -64,7 +54,7 @@ A revisão identificou responsabilidades separadas nos seguintes módulos:
 
 Não foi identificada duplicação significativa nesses arquivos que justificasse uma refatoração imediata.
 
-## 6. Configuração do Docker
+## 5. Configuração do Docker
 
 O arquivo `.dockerignore` foi revisado para excluir, entre outros itens:
 
@@ -78,7 +68,7 @@ O arquivo `.dockerignore` foi revisado para excluir, entre outros itens:
 
 O arquivo mantém uma exceção para `.env.example`. Esse arquivo deve conter somente valores de exemplo, nunca segredos reais.
 
-## 7. Validação realizada
+## 6. Validação realizada
 
 O comando abaixo foi executado após as alterações em `requirements.txt`:
 
@@ -89,10 +79,3 @@ Resultado:
 `No broken requirements found.`
 
 Isso confirma que não foram encontrados conflitos entre os pacotes instalados. Essa verificação, isoladamente, não garante que todas as funcionalidades estejam funcionando nem que todas as dependências declaradas sejam necessárias.
-
-## 8. Próximos cuidados
-
-- Executar testes funcionais de transcrição de áudio e vídeo, análise estruturada e chat com PDFs.
-- Confirmar a necessidade de `langchain` antes de removê-lo.
-- Manter as dependências alinhadas ao código e atualizar esta documentação quando houver mudanças.
-- Não remover dependências apenas por não aparecerem em uma busca textual.
